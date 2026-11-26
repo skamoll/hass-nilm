@@ -427,3 +427,94 @@ def test_microwave_and_air_fryer_split_by_duration_on_same_band() -> None:
     assert 0.40 <= fryer_kwh <= 0.46  # ~1310 W x 20 min = 0.437 kWh, start back-dated
     assert fr.appliances["freidora"].last_cycle is not None
     assert fr.appliances["microondas"].last_cycle.duration_min < 3
+
+
+# Real P04 readings, 26/11/2026 10:47-10:55: air fryer for ~6 min, right after the
+# fridge defrost heater (~250 W on the line). The thermostat cuts the heater twice
+# (10:51:42 and 10:52:28) for 11-33 s while the fan keeps ~340-590 W.
+FRYER_2026_11_26 = [
+    ("10:47:27", 280),
+    ("10:47:32", 248),
+    ("10:47:37", 280),
+    ("10:47:43", 249),
+    ("10:48:19", 1080),
+    ("10:48:24", 2186),
+    ("10:48:31", 2210),
+    ("10:48:37", 2172),
+    ("10:48:44", 2162),
+    ("10:48:50", 2151),
+    ("10:48:55", 2139),
+    ("10:49:00", 2129),
+    ("10:49:05", 2116),
+    ("10:49:36", 2127),
+    ("10:49:41", 2138),
+    ("10:49:54", 2150),
+    ("10:50:01", 2137),
+    ("10:50:10", 2127),
+    ("10:50:17", 2137),
+    ("10:50:29", 2127),
+    ("10:50:34", 2115),
+    ("10:50:45", 2105),
+    ("10:50:59", 2095),
+    ("10:51:05", 2085),
+    ("10:51:13", 2075),
+    ("10:51:19", 2065),
+    ("10:51:42", 1322),
+    ("10:51:47", 586),
+    ("10:52:15", 2015),
+    ("10:52:20", 2091),
+    ("10:52:28", 811),
+    ("10:52:33", 587),
+    ("10:52:39", 2062),
+    ("10:52:44", 2106),
+    ("10:52:49", 2102),
+    ("10:52:54", 1901),
+    ("10:52:59", 1874),
+    ("10:53:38", 1672),
+    ("10:53:43", 358),
+    ("10:54:17", 344),
+    ("10:54:22", 9),
+    ("10:56:11", 21),
+    ("10:56:16", 10),
+]
+
+
+def _replay(engine: NilmLineEngine, readings, until: str = "10:59:00"):
+    def at(hms: str):
+        h, m, s = (int(x) for x in hms.split(":"))
+        return T0.replace(hour=h, minute=m, second=s)
+
+    frames, last = [], None
+    end = at(until)
+    t = at(readings[0][0])
+    i = 0
+    while t <= end:  # 15 s heartbeat + every real report, like the coordinator
+        while i < len(readings) and at(readings[i][0]) <= t:
+            last = float(readings[i][1])
+            frames.append(engine.process_sample(LineSample(at(readings[i][0]), last)))
+            i += 1
+        frames.append(engine.process_sample(LineSample(t, last)))
+        t += timedelta(seconds=15)
+    return frames
+
+
+def test_air_fryer_survives_thermostat_cuts_real_session() -> None:
+    cfg = SourceLineConfig(line_id="p04", name="P04", skew_hold_s=0.0, median_window=3)
+    fryer = ApplianceProfile(
+        appliance_id="freidora",
+        name="Freidora",
+        archetype=Archetype.STEP,
+        min_power_w=1150.0,
+        max_power_w=2300.0,
+        edge_tolerance_w=150.0,
+        min_on_s=210.0,
+        min_cycle_energy_kwh=0.05,
+        off_debounce_s=45.0,
+    )
+    engine = NilmLineEngine(cfg, [fryer])
+    frames = _replay(engine, FRYER_2026_11_26)
+    cycles = [c for f in frames for c in f.completed_cycles]
+    assert len(cycles) == 1, cycles
+    cyc = cycles[0]
+    assert 5.0 <= cyc.duration_min <= 6.5  # 10:48:19 -> ~10:53:43
+    assert 0.15 <= cyc.energy_kwh <= 0.22  # ~1.9 kW net for ~5.5 min

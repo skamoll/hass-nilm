@@ -38,6 +38,7 @@ from .engine.discovery import (
     discover_patterns,
     flow_share,
     profile_from_candidate,
+    residual_series,
     same_pattern,
     to_dict,
 )
@@ -52,7 +53,7 @@ DAILY_RUN = (3, 40, 0)
 MAX_PENDING_ISSUES = 5
 ISSUE_PREFIX = "pattern_"
 # Bump when discovery/clue logic changes: the next start re-learns at once.
-DISCOVERY_VERSION = 3
+DISCOVERY_VERSION = 4  # v0.2.4: learns from the residual (sub-meters removed)
 CLUE_WINDOW_S = 90
 RANDOM_WINDOWS = 40
 CLUE_DOMAINS = {
@@ -84,10 +85,17 @@ def issue_id_for(entry_id: str, candidate_id: str) -> str:
 class PatternDiscovery:
     """Per-line pattern learner backed by a Store and Repairs issues."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, power_entity: str) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        power_entity: str,
+        submeter_entities: tuple[str, ...] = (),
+    ) -> None:
         self.hass = hass
         self.entry = entry
         self.power_entity = power_entity
+        self.submeter_entities = tuple(submeter_entities)
         self._store: Store[dict[str, Any]] = Store(
             hass, STORE_VERSION, f"{DOMAIN}.patterns.{entry.entry_id}"
         )
@@ -133,12 +141,21 @@ class PatternDiscovery:
     # ------------------------------------------------------------------ run
 
     async def _async_load_samples(self, days: int) -> list[tuple[datetime, float]]:
+        """The line's residual history: parent meter minus metered children."""
+        if "recorder" not in self.hass.config.components:
+            return []
+        parent = await self._async_load_series(self.power_entity, days)
+        subs = [await self._async_load_series(e, days) for e in self.submeter_entities]
+        if not subs:
+            return parent
+        return await self.hass.async_add_executor_job(residual_series, parent, subs)
+
+    async def _async_load_series(self, entity: str, days: int) -> list[tuple[datetime, float]]:
         from homeassistant.components.recorder import get_instance
         from homeassistant.components.recorder import history as recorder_history
 
         end = dt_util.utcnow()
         start = end - timedelta(days=days)
-        entity = self.power_entity
 
         def _job() -> list[tuple[datetime, float]]:
             out: list[tuple[datetime, float]] = []
@@ -163,8 +180,6 @@ class PatternDiscovery:
                 t0 = t1
             return out
 
-        if "recorder" not in self.hass.config.components:
-            return []
         return await get_instance(self.hass).async_add_executor_job(_job)
 
     async def async_run(self, days: int = HISTORY_DAYS) -> dict[str, Any]:
@@ -289,6 +304,7 @@ class PatternDiscovery:
             for e in er.async_entries_for_config_entry(er.async_get(self.hass), self.entry.entry_id)
         }
         own.add(self.power_entity)
+        own.update(self.submeter_entities)
         ents = [
             st.entity_id
             for st in self.hass.states.async_all()

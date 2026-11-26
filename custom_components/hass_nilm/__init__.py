@@ -34,6 +34,7 @@ from .const import (
     CONF_MIN_ON_S,
     CONF_MIN_POWER_W,
     CONF_NOMINAL_POWER_W,
+    CONF_OFF_DEBOUNCE_S,
     CONF_PHASES,
     CONF_PRIORITY,
     CONF_PROGRAMS,
@@ -197,6 +198,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 vol.Optional(CONF_MIN_ON_S, default=15.0): vol.Coerce(float),
                 vol.Optional(CONF_MAX_ON_S, default=14400.0): vol.Coerce(float),
                 vol.Optional(CONF_MAX_DURATION_S, default=0.0): vol.Coerce(float),
+                vol.Optional(CONF_OFF_DEBOUNCE_S, default=0.0): vol.Coerce(float),
                 vol.Optional(CONF_IDLE_THRESHOLD_W, default=15.0): vol.Coerce(float),
                 vol.Optional(CONF_MAX_PAUSE_S, default=900.0): vol.Coerce(float),
                 vol.Optional(CONF_END_IDLE_HOLD_S, default=180.0): vol.Coerce(float),
@@ -251,7 +253,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    coordinator.patterns = PatternDiscovery(hass, entry, coordinator.parent_entity_id)
+    coordinator.patterns = PatternDiscovery(
+        hass, entry, coordinator.parent_entity_id, coordinator.submeter_entity_ids
+    )
     await coordinator.patterns.async_setup()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

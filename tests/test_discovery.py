@@ -216,3 +216,25 @@ def test_flow_share_tells_water_appliances_apart() -> None:
     assert flow_share(runs, flow) == 0.8
     assert flow_share(runs, [(T0, 0.0)]) == 0.0
     assert flow_share([], flow) is None
+
+
+def test_residual_series_removes_a_metered_child() -> None:
+    """P07 reality: the Friday server (own plug) adds +130 W bursts on the garage
+    line. Learning must see the line without it."""
+    from custom_components.hass_nilm.engine.discovery import residual_series
+
+    parent = [(T0, 180.0), (T0 + timedelta(minutes=10), 310.0), (T0 + timedelta(minutes=70), 180.0)]
+    server = [
+        (T0, 140.0),
+        (T0 + timedelta(minutes=10, seconds=4), 270.0),
+        (T0 + timedelta(minutes=70, seconds=3), 140.0),
+    ]
+    res = residual_series(parent, [server])
+    assert all(
+        35.0 <= w <= 45.0
+        for t, w in res
+        if t not in (T0 + timedelta(minutes=10), T0 + timedelta(minutes=70))
+    )  # skew blips aside
+    assert residual_series(parent, []) == parent
+    # no burst survives long enough to become an event
+    assert discover_patterns(res) == []

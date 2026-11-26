@@ -669,6 +669,40 @@ def flow_share(
     return round(hits / len(runs), 2)
 
 
+def residual_series(
+    parent: Sequence[tuple[datetime, float]],
+    submeters: Sequence[Sequence[tuple[datetime, float]]],
+) -> list[tuple[datetime, float]]:
+    """Rebuild the historical residual (parent minus metered children).
+
+    Meters report on change at their own pace, so every report of any of them is a
+    point in time where the residual may change: each meter holds its last value
+    until it reports again. Lets discovery learn from what is *not* already metered
+    (e.g. a server or a washing machine on their own plugs)."""
+    if not submeters:
+        return list(parent)
+    events: list[tuple[datetime, int, float]] = [(t, -1, w) for t, w in parent]
+    for idx, series in enumerate(submeters):
+        events.extend((t, idx, w) for t, w in series)
+    events.sort(key=lambda e: e[0])
+    level_parent: float | None = None
+    levels = [0.0] * len(submeters)
+    out: list[tuple[datetime, float]] = []
+    i = 0
+    while i < len(events):
+        t = events[i][0]
+        while i < len(events) and events[i][0] == t:  # same instant: apply all first
+            _, idx, w = events[i]
+            if idx < 0:
+                level_parent = w
+            else:
+                levels[idx] = w
+            i += 1
+        if level_parent is not None:
+            out.append((t, max(0.0, level_parent - sum(levels))))
+    return out
+
+
 __all__ = [
     "DiscoveryConfig",
     "Edge",
@@ -683,6 +717,7 @@ __all__ = [
     "discover_patterns",
     "pair_edges",
     "profile_from_candidate",
+    "residual_series",
     "same_pattern",
     "to_dict",
 ]

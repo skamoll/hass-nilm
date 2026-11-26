@@ -34,6 +34,7 @@ from .const import (
     CONF_MIN_HIGH_BLOCKS,
     CONF_MIN_ON_S,
     CONF_MIN_POWER_W,
+    CONF_OFF_DEBOUNCE_S,
     CONF_PARENT_POWER_ENTITY,
     CONF_PHASES_JSON,
     CONF_PRIORITY,
@@ -187,6 +188,17 @@ def _appliance_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                     min=0,
                     max=86400,
                     step=10,
+                    unit_of_measurement="s",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Optional(
+                CONF_OFF_DEBOUNCE_S, default=float(d.get(CONF_OFF_DEBOUNCE_S, 0.0))
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=600,
+                    step=5,
                     unit_of_measurement="s",
                     mode=selector.NumberSelectorMode.BOX,
                 )

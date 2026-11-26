@@ -91,6 +91,9 @@ class ApplianceProfile:
     # runs 4 min, an air fryer always does). Energy is held until the run ends
     # and dropped if it overruns, so total_increasing counters never go back.
     max_duration_s: float = 0.0
+    # >0: dips shorter than this (a thermostat cutting the heater while the fan
+    # keeps running) do not end the run, neither while confirming nor once on.
+    off_debounce_s: float = 0.0
     idle_threshold_w: float = 15.0
     max_pause_s: float = 900.0
     end_idle_hold_s: float = 180.0

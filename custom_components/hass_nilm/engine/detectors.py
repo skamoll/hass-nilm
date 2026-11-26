@@ -145,6 +145,7 @@ class StepDetector(BaseApplianceDetector):
         self._pending_prev_ts: datetime | None = None
         self._pending_prev_w: float = 0.0
         self._pending_kwh: float = 0.0
+        self._low_since: datetime | None = None
 
     def _matches_on_edge(self, residual_w: float, min_recent_w: float) -> tuple[bool, float]:
         p = self.profile
@@ -203,10 +204,16 @@ class StepDetector(BaseApplianceDetector):
         if self._state == "pending":
             assert self._start_ts is not None
             if residual_w < p.min_power_w * 0.65:
-                self._state = "off"
-                self._start_ts = None
-                self._pending_kwh = 0.0
-                return DetectorStepOutput(is_running=False, phase="off", raw_power_w=0.0)
+                if self._low_since is None:
+                    self._low_since = ts
+                if (ts - self._low_since).total_seconds() >= p.off_debounce_s:
+                    self._state = "off"
+                    self._start_ts = None
+                    self._pending_kwh = 0.0
+                    self._low_since = None
+                    return DetectorStepOutput(is_running=False, phase="off", raw_power_w=0.0)
+            else:
+                self._low_since = None
 
             cur_w = (
                 residual_w
@@ -247,8 +254,26 @@ class StepDetector(BaseApplianceDetector):
             self.current_cycle_energy_kwh = 0.0
             self._last_clamped_w = 0.0  # no trapezoid tail leaks into the total
             return DetectorStepOutput(is_running=False, phase="off", raw_power_w=0.0)
-        if self._matches_off_condition(ts, residual_w, max_recent_w):
-            dur_min = max(0.0, (ts - self._start_ts).total_seconds() / 60.0)
+        off_now = self._matches_off_condition(ts, residual_w, max_recent_w)
+        timed_out = (ts - self._start_ts).total_seconds() >= p.max_on_s
+        if off_now and not timed_out and p.off_debounce_s > 0.0:
+            # Hold through short dips; close at the moment the dip began if it lasts.
+            if self._low_since is None:
+                self._low_since = ts
+            if (ts - self._low_since).total_seconds() < p.off_debounce_s:
+                return DetectorStepOutput(
+                    is_running=True,
+                    phase="running",
+                    raw_power_w=min(residual_w, self._latched_w),
+                    cycle_start_time=self._start_ts,
+                    high_blocks_in_cycle=1 if self._peak_w >= p.high_block_threshold_w else 0,
+                )
+        elif not off_now:
+            self._low_since = None
+        if off_now:
+            end_ts = self._low_since if (self._low_since and p.off_debounce_s > 0.0) else ts
+            self._low_since = None
+            dur_min = max(0.0, (end_ts - self._start_ts).total_seconds() / 60.0)
             cycle_kwh = round(self.current_cycle_energy_kwh, 4)
             completed: CompletedCycle | None = None
             valid = cycle_kwh >= p.min_cycle_energy_kwh or p.min_cycle_energy_kwh <= 0.0
@@ -266,7 +291,7 @@ class StepDetector(BaseApplianceDetector):
                     appliance_id=p.appliance_id,
                     appliance_name=p.name,
                     start_time=self._start_ts,
-                    end_time=ts,
+                    end_time=end_ts,
                     duration_min=round(dur_min, 2),
                     energy_kwh=cycle_kwh,
                     peak_power_w=round(self._peak_w, 1),

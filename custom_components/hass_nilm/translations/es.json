@@ -60,7 +60,8 @@
           "dedicated_meter": "Enchufe o circuito dedicado a este aparato",
           "phases_json": "JSON de fases personalizadas (opcional)",
           "programs_json": "JSON de huellas de programa (opcional)",
-          "max_duration_s": "Duración máxima del aparato (0 = sin límite; si dura más, no es este aparato)"
+          "max_duration_s": "Duración máxima del aparato (0 = sin límite; si dura más, no es este aparato)",
+          "off_debounce_s": "Ignorar cortes más cortos que (s): cortes del termostato que no acaban el uso"
         }
       },
       "remove_appliance": {
