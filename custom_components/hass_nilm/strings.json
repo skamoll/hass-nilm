@@ -1,0 +1,123 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add NILM Source Line",
+        "description": "Select the parent power sensor (whole home, phase, or sub-circuit) and any already-measured child sub-meters to subtract.",
+        "data": {
+          "line_name": "Line name",
+          "parent_power_entity": "Parent power sensor",
+          "submeter_entities": "Known child sub-meter power sensors",
+          "skew_hold_s": "Sub-meter skew settling hold",
+          "median_window": "Median filter window (samples)",
+          "baseline_floor_w": "Constant standby floor to subtract"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This NILM source line is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manage NILM Source Line",
+        "menu_options": {
+          "line_settings": "Edit source line & sub-meters",
+          "add_appliance": "Add or update appliance detector",
+          "remove_appliance": "Remove appliance detector"
+        }
+      },
+      "line_settings": {
+        "title": "Source Line Settings",
+        "data": {
+          "line_name": "Line name",
+          "parent_power_entity": "Parent power sensor",
+          "submeter_entities": "Known child sub-meter power sensors",
+          "skew_hold_s": "Sub-meter skew settling hold",
+          "median_window": "Median filter window (samples)",
+          "baseline_floor_w": "Constant standby floor to subtract"
+        }
+      },
+      "add_appliance": {
+        "title": "Appliance Detector Profile",
+        "data": {
+          "name": "Appliance name",
+          "archetype": "Pattern archetype",
+          "min_power_w": "Minimum active power",
+          "max_power_w": "Maximum active power",
+          "edge_tolerance_w": "Edge matching tolerance",
+          "min_on_s": "Minimum active confirmation time",
+          "max_on_s": "Safety maximum session duration",
+          "idle_threshold_w": "Idle / pause power threshold",
+          "end_idle_hold_s": "Sustained idle to close cycle",
+          "max_pause_s": "Maximum thermal / internal pause",
+          "high_block_threshold_w": "Heating / high-power block threshold",
+          "high_block_min_s": "Minimum heating block duration",
+          "min_cycle_energy_kwh": "Minimum valid cycle energy",
+          "min_high_blocks": "Minimum heating blocks per cycle",
+          "priority": "Allocation priority (lower wins)",
+          "dedicated_meter": "Dedicated plug / single-load circuit",
+          "phases_json": "Custom phases JSON (optional)",
+          "programs_json": "Program fingerprints JSON (optional)"
+        }
+      },
+      "remove_appliance": {
+        "title": "Remove Appliance Detector",
+        "data": {
+          "appliance_id": "Appliance"
+        }
+      }
+    },
+    "error": {
+      "name_required": "Enter a valid appliance name.",
+      "max_below_min": "Maximum power must be greater than or equal to minimum power.",
+      "invalid_json": "Enter a valid JSON array of objects."
+    }
+  },
+  "selector": {
+    "archetype": {
+      "options": {
+        "step": "Step ON/OFF (resistive / NILM Blueprint)",
+        "cycling": "Cycling / thermostatic (oven, hob, fridge)",
+        "multiphase": "Multi-phase cycle & program (washer, dishwasher)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "residual_power": {
+        "name": "Residual power"
+      },
+      "submeters_power": {
+        "name": "Known sub-meters power"
+      },
+      "inferred_power": {
+        "name": "Total inferred power"
+      },
+      "unexplained_power": {
+        "name": "Unexplained power"
+      },
+      "appliance_power": {
+        "name": "Power"
+      },
+      "appliance_energy": {
+        "name": "Energy"
+      },
+      "appliance_phase": {
+        "name": "Phase"
+      },
+      "appliance_last_cycle": {
+        "name": "Last cycle"
+      }
+    },
+    "binary_sensor": {
+      "skew_guard_active": {
+        "name": "Skew guard active"
+      },
+      "appliance_running": {
+        "name": "Running"
+      }
+    }
+  }
+}

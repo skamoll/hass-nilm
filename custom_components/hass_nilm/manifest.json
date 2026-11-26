@@ -1,0 +1,17 @@
+{
+  "domain": "hass_nilm",
+  "name": "NILM Appliance Disaggregator",
+  "after_dependencies": [
+    "recorder"
+  ],
+  "codeowners": [
+    "@skamoll"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/skamoll/hass-nilm",
+  "integration_type": "helper",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/skamoll/hass-nilm/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

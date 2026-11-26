@@ -1,0 +1,123 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Añadir línea de medida NILM",
+        "description": "Selecciona el sensor de potencia padre (general de vivienda, fase o subcircuito) y los submedidores hijos ya conocidos que quieras restar.",
+        "data": {
+          "line_name": "Nombre de la línea",
+          "parent_power_entity": "Sensor de potencia padre",
+          "submeter_entities": "Submedidores hijos conocidos",
+          "skew_hold_s": "Ventana de asentamiento por desfase (skew)",
+          "median_window": "Ventana del filtro de mediana (muestras)",
+          "baseline_floor_w": "Base constante de reposo a restar"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Esta línea de medida NILM ya está configurada."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Gestionar línea NILM",
+        "menu_options": {
+          "line_settings": "Editar línea y submedidores",
+          "add_appliance": "Añadir o actualizar detector de electrodoméstico",
+          "remove_appliance": "Eliminar detector de electrodoméstico"
+        }
+      },
+      "line_settings": {
+        "title": "Ajustes de la línea de medida",
+        "data": {
+          "line_name": "Nombre de la línea",
+          "parent_power_entity": "Sensor de potencia padre",
+          "submeter_entities": "Submedidores hijos conocidos",
+          "skew_hold_s": "Ventana de asentamiento por desfase (skew)",
+          "median_window": "Ventana del filtro de mediana (muestras)",
+          "baseline_floor_w": "Base constante de reposo a restar"
+        }
+      },
+      "add_appliance": {
+        "title": "Perfil del detector de electrodoméstico",
+        "data": {
+          "name": "Nombre del electrodoméstico",
+          "archetype": "Arquetipo de patrón",
+          "min_power_w": "Potencia mínima activa",
+          "max_power_w": "Potencia máxima activa",
+          "edge_tolerance_w": "Tolerancia de emparejamiento de flancos",
+          "min_on_s": "Tiempo mínimo de confirmación encendido",
+          "max_on_s": "Duración máxima de seguridad",
+          "idle_threshold_w": "Umbral de reposo / pausa",
+          "end_idle_hold_s": "Reposo sostenido para cerrar ciclo",
+          "max_pause_s": "Pausa térmica o interna máxima",
+          "high_block_threshold_w": "Umbral de bloque de calentamiento",
+          "high_block_min_s": "Duración mínima de bloque de calentamiento",
+          "min_cycle_energy_kwh": "Energía mínima de ciclo válido",
+          "min_high_blocks": "Bloques de calentamiento mínimos por ciclo",
+          "priority": "Prioridad de reparto (menor gana)",
+          "dedicated_meter": "Enchufe o circuito dedicado a este aparato",
+          "phases_json": "JSON de fases personalizadas (opcional)",
+          "programs_json": "JSON de huellas de programa (opcional)"
+        }
+      },
+      "remove_appliance": {
+        "title": "Eliminar detector de electrodoméstico",
+        "data": {
+          "appliance_id": "Electrodoméstico"
+        }
+      }
+    },
+    "error": {
+      "name_required": "Introduce un nombre válido para el electrodoméstico.",
+      "max_below_min": "La potencia máxima debe ser mayor o igual que la mínima.",
+      "invalid_json": "Introduce una lista JSON válida de objetos."
+    }
+  },
+  "selector": {
+    "archetype": {
+      "options": {
+        "step": "Escalón ON/OFF (resistivo / NILM Blueprint)",
+        "cycling": "Cíclico / termostático (horno, placa, nevera)",
+        "multiphase": "Multifase y programa (lavadora, lavavajillas)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "residual_power": {
+        "name": "Potencia residual"
+      },
+      "submeters_power": {
+        "name": "Potencia de submedidores conocidos"
+      },
+      "inferred_power": {
+        "name": "Potencia total inferida"
+      },
+      "unexplained_power": {
+        "name": "Potencia sin explicar"
+      },
+      "appliance_power": {
+        "name": "Potencia"
+      },
+      "appliance_energy": {
+        "name": "Energía"
+      },
+      "appliance_phase": {
+        "name": "Fase"
+      },
+      "appliance_last_cycle": {
+        "name": "Último ciclo"
+      }
+    },
+    "binary_sensor": {
+      "skew_guard_active": {
+        "name": "Protección por desfase activa"
+      },
+      "appliance_running": {
+        "name": "En marcha"
+      }
+    }
+  }
+}

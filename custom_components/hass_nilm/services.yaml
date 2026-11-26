@@ -1,0 +1,141 @@
+scan_recorder:
+  name: Scan Recorder power history
+  description: Analyze historical power states on a background thread and return candidate step and cycle signatures.
+  fields:
+    entity_id:
+      name: Power entity
+      description: Power sensor (W or kW) to analyze.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+          device_class: power
+    days:
+      name: Days of history
+      description: Number of past days to inspect in Recorder.
+      default: 14
+      selector:
+        number:
+          min: 1
+          max: 90
+          unit_of_measurement: d
+    idle_threshold_w:
+      name: Idle threshold
+      description: Power below which the circuit is considered idle.
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 1000
+          unit_of_measurement: W
+    min_step_w:
+      name: Minimum rising step
+      description: Smallest positive power jump to cluster.
+      default: 120
+      selector:
+        number:
+          min: 20
+          max: 5000
+          unit_of_measurement: W
+    merge_gap_s:
+      name: Pause merge gap
+      description: Maximum idle pause inside a single multi-phase session.
+      default: 900
+      selector:
+        number:
+          min: 30
+          max: 7200
+          unit_of_measurement: s
+    high_power_threshold_w:
+      name: High-power block threshold
+      description: Threshold used to count heating plateaus inside cycles.
+      default: 1000
+      selector:
+        number:
+          min: 100
+          max: 10000
+          unit_of_measurement: W
+    min_cycle_energy_kwh:
+      name: Minimum cycle energy
+      description: Ignore cycles smaller than this energy threshold.
+      default: 0.05
+      selector:
+        number:
+          min: 0.01
+          max: 20
+          step: 0.01
+          unit_of_measurement: kWh
+
+upsert_appliance:
+  name: Add or update appliance profile
+  description: Create or update an appliance detector profile on a NILM SourceLine.
+  fields:
+    config_entry_id:
+      name: Config entry ID
+      description: Target NILM config entry (optional when only one line exists).
+      selector:
+        text:
+    appliance_id:
+      name: Appliance ID
+      description: Optional stable slug (auto-generated from name if omitted).
+      selector:
+        text:
+    name:
+      name: Appliance name
+      required: true
+      selector:
+        text:
+    archetype:
+      name: Pattern archetype
+      default: step
+      selector:
+        select:
+          options:
+            - step
+            - cycling
+            - multiphase
+    min_power_w:
+      name: Minimum power
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 25000
+          unit_of_measurement: W
+    max_power_w:
+      name: Maximum power
+      required: true
+      selector:
+        number:
+          min: 5
+          max: 25000
+          unit_of_measurement: W
+    dedicated_meter:
+      name: Dedicated meter mode
+      default: false
+      selector:
+        boolean:
+    phases:
+      name: Phase definitions
+      description: Optional list of PhaseSpec dicts for multiphase appliances.
+      selector:
+        object:
+    programs:
+      name: Program fingerprints
+      description: Optional list of ProgramFingerprint dicts for cycle identification.
+      selector:
+        object:
+
+remove_appliance:
+  name: Remove appliance profile
+  description: Remove an appliance profile and its sub-device from a NILM SourceLine.
+  fields:
+    config_entry_id:
+      name: Config entry ID
+      selector:
+        text:
+    appliance_id:
+      name: Appliance ID
+      required: true
+      selector:
+        text:
