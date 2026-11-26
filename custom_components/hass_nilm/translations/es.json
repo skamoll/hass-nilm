@@ -59,7 +59,8 @@
           "priority": "Prioridad de reparto (menor gana)",
           "dedicated_meter": "Enchufe o circuito dedicado a este aparato",
           "phases_json": "JSON de fases personalizadas (opcional)",
-          "programs_json": "JSON de huellas de programa (opcional)"
+          "programs_json": "JSON de huellas de programa (opcional)",
+          "max_duration_s": "Duración máxima del aparato (0 = sin límite; si dura más, no es este aparato)"
         }
       },
       "remove_appliance": {

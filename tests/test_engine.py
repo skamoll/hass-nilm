@@ -376,3 +376,54 @@ def test_multiphase_dishwasher_4_blocks_and_ambiguity_fallback() -> None:
     assert 1.40 <= cyc.energy_kwh <= 1.65
     assert cyc.duration_min == pytest.approx(124.0, abs=2.0)
     assert cyc.matched_program == UNKNOWN_PROGRAM  # Ambiguous between auto_a and auto_b!
+
+
+def test_microwave_and_air_fryer_split_by_duration_on_same_band() -> None:
+    """P04 reality: microwave (coffee, ~2 min) and air fryer (>=3.5 min) draw the same
+    ~1300 W. The microwave holds its energy and drops it if the run overruns 3.5 min;
+    the fryer confirms after 3.5 min and back-dates its energy. No double counting."""
+    cfg = SourceLineConfig(line_id="p04", name="P04", skew_hold_s=0.0, median_window=1)
+    micro = ApplianceProfile(
+        appliance_id="microondas",
+        name="Microondas",
+        archetype=Archetype.STEP,
+        min_power_w=1100.0,
+        max_power_w=1450.0,
+        min_on_s=20.0,
+        max_duration_s=210.0,
+        min_cycle_energy_kwh=0.005,
+    )
+    fryer = ApplianceProfile(
+        appliance_id="freidora",
+        name="Freidora",
+        archetype=Archetype.STEP,
+        min_power_w=1150.0,
+        max_power_w=1950.0,
+        min_on_s=210.0,
+        min_cycle_energy_kwh=0.05,
+    )
+    engine = NilmLineEngine(cfg, [micro, fryer])
+    t = 0
+    for t in range(0, 60, 10):
+        engine.process_sample(LineSample(_ts(t), 10.0))
+
+    def run(start: int, minutes: float, watts: float) -> None:
+        end = start + int(minutes * 60)
+        for s in range(start, end, 10):
+            engine.process_sample(LineSample(_ts(s), 10.0 + watts))
+        for s in range(end, end + 120, 10):
+            engine.process_sample(LineSample(_ts(s), 10.0))
+
+    run(100, 2.0, 1250.0)  # coffee in the microwave
+    fr = engine.process_sample(LineSample(_ts(400), 10.0))
+    micro_kwh = fr.appliances["microondas"].total_energy_kwh
+    assert 0.035 <= micro_kwh <= 0.05  # ~1250 W x 2 min = 0.042 kWh
+    assert fr.appliances["freidora"].total_energy_kwh == 0.0
+
+    run(1000, 20.0, 1310.0)  # vegetables in the air fryer
+    fr = engine.process_sample(LineSample(_ts(3000), 10.0))
+    assert fr.appliances["microondas"].total_energy_kwh == micro_kwh  # nothing added
+    fryer_kwh = fr.appliances["freidora"].total_energy_kwh
+    assert 0.40 <= fryer_kwh <= 0.46  # ~1310 W x 20 min = 0.437 kWh, start back-dated
+    assert fr.appliances["freidora"].last_cycle is not None
+    assert fr.appliances["microondas"].last_cycle.duration_min < 3

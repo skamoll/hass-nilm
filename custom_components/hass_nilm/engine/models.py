@@ -87,6 +87,10 @@ class ApplianceProfile:
     edge_tolerance_w: float = 80.0
     min_on_s: float = 15.0
     max_on_s: float = 14400.0
+    # >0: a run longer than this is NOT this appliance (e.g. a microwave never
+    # runs 4 min, an air fryer always does). Energy is held until the run ends
+    # and dropped if it overruns, so total_increasing counters never go back.
+    max_duration_s: float = 0.0
     idle_threshold_w: float = 15.0
     max_pause_s: float = 900.0
     end_idle_hold_s: float = 180.0

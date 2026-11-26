@@ -79,6 +79,7 @@ class BaseApplianceDetector:
         self.last_cycle: CompletedCycle | None = None
         self._last_int_ts: datetime | None = None
         self._last_clamped_w: float = 0.0
+        self._defer_energy: bool = profile.max_duration_s > 0.0
 
     def restore_total_energy(self, energy_kwh: float) -> None:
         """Seed cumulative energy from Home Assistant RestoreEntity."""
@@ -101,9 +102,13 @@ class BaseApplianceDetector:
             if 0.0 < dt_s <= max_gap_s and (self._last_clamped_w > 0.0 or clamped_power_w > 0.0):
                 delta_kwh = ((self._last_clamped_w + clamped_power_w) * 0.5 * dt_s) / 3_600_000.0
                 if delta_kwh > 0.0:
-                    self.total_energy_kwh += delta_kwh
-                    if is_running:
+                    if is_running and self._defer_energy:
+                        # held until the run proves it is this appliance
                         self.current_cycle_energy_kwh += delta_kwh
+                    else:
+                        self.total_energy_kwh += delta_kwh
+                        if is_running:
+                            self.current_cycle_energy_kwh += delta_kwh
         self._last_int_ts = timestamp
         self._last_clamped_w = clamped_power_w
         return delta_kwh
@@ -218,7 +223,8 @@ class StepDetector(BaseApplianceDetector):
 
             if (ts - self._start_ts).total_seconds() >= self._confirm_hold_s:
                 self._state = "running"
-                self.total_energy_kwh += self._pending_kwh
+                if not self._defer_energy:
+                    self.total_energy_kwh += self._pending_kwh
                 self.current_cycle_energy_kwh = self._pending_kwh
                 commit = self._pending_kwh
                 self._pending_kwh = 0.0
@@ -234,11 +240,21 @@ class StepDetector(BaseApplianceDetector):
 
         # _state == "running"
         assert self._start_ts is not None
+        if p.max_duration_s > 0.0 and (ts - self._start_ts).total_seconds() >= p.max_duration_s:
+            # Overran: this run belongs to another appliance. Drop the held energy.
+            self._state = "off"
+            self._start_ts = None
+            self.current_cycle_energy_kwh = 0.0
+            self._last_clamped_w = 0.0  # no trapezoid tail leaks into the total
+            return DetectorStepOutput(is_running=False, phase="off", raw_power_w=0.0)
         if self._matches_off_condition(ts, residual_w, max_recent_w):
             dur_min = max(0.0, (ts - self._start_ts).total_seconds() / 60.0)
             cycle_kwh = round(self.current_cycle_energy_kwh, 4)
             completed: CompletedCycle | None = None
-            if cycle_kwh >= p.min_cycle_energy_kwh or p.min_cycle_energy_kwh <= 0.0:
+            valid = cycle_kwh >= p.min_cycle_energy_kwh or p.min_cycle_energy_kwh <= 0.0
+            if self._defer_energy and valid:
+                self.total_energy_kwh += self.current_cycle_energy_kwh
+            if valid:
                 hb = 1 if self._peak_w >= p.high_block_threshold_w else 0
                 prog, conf = match_program_fingerprint(
                     p.programs,

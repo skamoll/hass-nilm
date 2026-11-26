@@ -25,6 +25,7 @@ from .const import (
     CONF_HIGH_BLOCK_THRESHOLD_W,
     CONF_IDLE_THRESHOLD_W,
     CONF_LINE_NAME,
+    CONF_MAX_DURATION_S,
     CONF_MAX_ON_S,
     CONF_MAX_PAUSE_S,
     CONF_MAX_POWER_W,
@@ -175,6 +176,17 @@ def _appliance_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                     min=60,
                     max=86400,
                     step=60,
+                    unit_of_measurement="s",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Optional(
+                CONF_MAX_DURATION_S, default=float(d.get(CONF_MAX_DURATION_S, 0.0))
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=86400,
+                    step=10,
                     unit_of_measurement="s",
                     mode=selector.NumberSelectorMode.BOX,
                 )

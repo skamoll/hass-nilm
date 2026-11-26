@@ -59,7 +59,8 @@
           "priority": "Allocation priority (lower wins)",
           "dedicated_meter": "Dedicated plug / single-load circuit",
           "phases_json": "Custom phases JSON (optional)",
-          "programs_json": "Program fingerprints JSON (optional)"
+          "programs_json": "Program fingerprints JSON (optional)",
+          "max_duration_s": "Maximum run length for this appliance (0 = no limit; longer runs are not this appliance)"
         }
       },
       "remove_appliance": {
