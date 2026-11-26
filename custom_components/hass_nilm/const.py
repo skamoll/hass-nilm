@@ -8,6 +8,9 @@ EVENT_CYCLE_FINISHED = "hass_nilm_cycle_finished"
 HEARTBEAT_INTERVAL_SECONDS = 15
 
 # SourceLine configuration keys
+LINE_MANUFACTURER = "Hass-NILM"
+LINE_MODEL = "Source Line Disaggregator"
+
 CONF_LINE_NAME = "line_name"
 CONF_PARENT_POWER_ENTITY = "parent_power_entity"
 CONF_SUBMETER_ENTITIES = "submeter_entities"

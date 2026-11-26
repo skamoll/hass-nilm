@@ -37,6 +37,8 @@ from .const import (
     CONF_PRIORITY,
     CONF_PROGRAMS,
     DOMAIN,
+    LINE_MANUFACTURER,
+    LINE_MODEL,
 )
 from .coordinator import NilmLineCoordinator, dict_to_appliance_profile
 from .engine import Archetype
@@ -210,6 +212,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _register_services(hass)
 
     coordinator = NilmLineCoordinator(hass, entry)
+    # Register the SourceLine device first: appliance devices link to it by registry id.
+    line_device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=coordinator.engine.config.name,
+        manufacturer=LINE_MANUFACTURER,
+        model=LINE_MODEL,
+        entry_type=dr.DeviceEntryType.SERVICE,
+    )
+    coordinator.line_device_id = line_device.id
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
 

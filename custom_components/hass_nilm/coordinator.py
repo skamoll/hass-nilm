@@ -176,6 +176,7 @@ class NilmLineCoordinator(DataUpdateCoordinator[LineFrame | None]):
         profiles = [dict_to_appliance_profile(item) for item in raw_apps]
         self.engine = NilmLineEngine(line_cfg, profiles)
         self._unsub_state_listener: CALLBACK_TYPE | None = None
+        self.line_device_id: str | None = None
 
         super().__init__(
             hass,

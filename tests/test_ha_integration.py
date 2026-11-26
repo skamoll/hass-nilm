@@ -13,6 +13,7 @@ if importlib.util.find_spec("homeassistant") is None:
 from homeassistant import bootstrap, loader
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.hass_nilm.const import (
@@ -36,7 +37,9 @@ from custom_components.hass_nilm.diagnostics import async_get_config_entry_diagn
 
 
 @pytest.mark.asyncio
-async def test_ha_end_to_end_disaggregation_services_and_unload(tmp_path: Path) -> None:
+async def test_ha_end_to_end_disaggregation_services_and_unload(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """Verify live HA state disaggregation (kW + W), cycle event, services, and unload."""
     (tmp_path / "custom_components").symlink_to(
         Path(__file__).resolve().parent.parent / "custom_components"
@@ -109,6 +112,17 @@ async def test_ha_end_to_end_disaggregation_services_and_unload(tmp_path: Path) 
             "kettle_phase",
             "kettle_last_cycle",
         } <= unique_suffixes
+
+        # Appliance devices hang from the SourceLine device by registry id (no via_device).
+        dev_reg = dr.async_get(hass)
+        line_dev = dev_reg.async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
+        kettle_dev = dev_reg.async_get_device_by_identifier(
+            (DOMAIN, f"{entry.entry_id}_kettle"), entry.entry_id
+        )
+        assert line_dev is not None
+        assert kettle_dev is not None
+        assert kettle_dev.via_device_id == line_dev.id
+        assert "via_device" not in caplog.text
 
         coord = hass.data[DOMAIN][entry.entry_id]
         assert coord.data is not None

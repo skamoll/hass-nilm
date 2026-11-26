@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, LINE_MANUFACTURER, LINE_MODEL
 from .coordinator import NilmLineCoordinator
 
 
@@ -20,8 +20,8 @@ class NilmLineEntity(CoordinatorEntity[NilmLineCoordinator]):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.entry.entry_id)},
             name=coordinator.engine.config.name,
-            manufacturer="Hass-NILM",
-            model="Source Line Disaggregator",
+            manufacturer=LINE_MANUFACTURER,
+            model=LINE_MODEL,
             entry_type=DeviceEntryType.SERVICE,
         )
 
@@ -44,7 +44,7 @@ class NilmApplianceEntity(CoordinatorEntity[NilmLineCoordinator]):
         self._attr_unique_id = f"{coordinator.entry.entry_id}_{appliance_id}_{key}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{coordinator.entry.entry_id}_{appliance_id}")},
-            via_device=(DOMAIN, coordinator.entry.entry_id),
+            via_device_id=coordinator.line_device_id,
             name=appliance_name,
             manufacturer="Hass-NILM",
             model=f"NILM Detector ({archetype_label})",
