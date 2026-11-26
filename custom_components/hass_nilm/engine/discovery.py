@@ -19,6 +19,7 @@ user's job; deriving detector parameters from them is not.
 from __future__ import annotations
 
 import math
+from bisect import bisect_left, bisect_right
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -30,8 +31,26 @@ class DiscoveryConfig:
     """Tuning knobs for pattern discovery. Defaults fit Tongou/Shelly-class meters."""
 
     min_edge_w: float = 30.0
+    noise_k: float = 4.0
+    noise_min_samples: int = 50
+    noise_cap_w: float = 50.0
     ramp_window_s: float = 20.0
-    settle_window_s: float = 60.0
+    # Settle window = max(settle_min_s, settle_factor x median report interval).
+    # Fixed 60 s by default: on 30 real days a shorter window (37 s) lost the
+    # kettle, and scaling it up for sparse meters (x3.1) swallowed short loads.
+    # settle_factor is kept as an opt-in for meters that report every minute.
+    settle_min_s: float = 60.0
+    settle_factor: float = 0.0
+    settle_max_s: float = 600.0
+    settle_max_samples: int = 9
+    merge_window_max_s: float = 60.0
+    # Pair validation recovers fused fridge cycles on fast meters (+2/day) but on
+    # 30 real days it halved the defrost heater on a slower meter: opt-in.
+    validate_pairs: bool = False
+    min_hold_fraction: float = 0.6
+    bound_windows: bool = False
+    validate_only_ambiguous: bool = True
+    prefer_recent: bool = True
     median_window: int = 3
     offline_gap_s: float = 6 * 3600.0
     pair_tolerance_rel: float = 0.25
@@ -148,17 +167,53 @@ def clean_series(
 
 
 def _steady_level(
-    run: Sequence[tuple[datetime, float]], idx: int, window_s: float, forward: bool
+    run: Sequence[tuple[datetime, float]],
+    idx: int,
+    window_s: float,
+    forward: bool,
+    max_samples: int = 9,
+    stop: int | None = None,
 ) -> float:
-    """Median level over ``window_s`` before (or after) ``run[idx]``, including it."""
+    """Median level over ``window_s`` before (or after) ``run[idx]``, including it,
+    never crossing index ``stop`` (the neighbouring significant step)."""
     t0 = run[idx][0]
     vals = [run[idx][1]]
     step = 1 if forward else -1
     k = idx + step
-    while 0 <= k < len(run) and abs((run[k][0] - t0).total_seconds()) <= window_s:
+    while (
+        0 <= k < len(run)
+        and (stop is None or (k < stop if forward else k > stop))
+        and len(vals) < max_samples
+        and abs((run[k][0] - t0).total_seconds()) <= window_s
+    ):
         vals.append(run[k][1])
         k += step
     return float(median(vals))
+
+
+def line_profile(
+    run: Sequence[tuple[datetime, float]], cfg: DiscoveryConfig
+) -> tuple[float, float]:
+    """Return (settle_window_s, edge_threshold_w) adapted to this meter and line.
+
+    The settle window scales with the meter's typical reporting interval (a 5 s
+    breaker and a report-on-change plug need different windows); the threshold
+    rises with the line's own noise (robust MAD of sample-to-sample changes).
+    """
+    if len(run) < 3:
+        return cfg.settle_min_s, cfg.min_edge_w
+    gaps = [
+        (run[i][0] - run[i - 1][0]).total_seconds()
+        for i in range(1, len(run))
+        if run[i][0] > run[i - 1][0]
+    ]
+    med_gap = median(gaps) if gaps else cfg.settle_min_s
+    win = min(cfg.settle_max_s, max(cfg.settle_min_s, cfg.settle_factor * med_gap))
+    if len(run) < cfg.noise_min_samples:
+        return win, cfg.min_edge_w
+    diffs = [abs(run[i][1] - run[i - 1][1]) for i in range(1, len(run))]
+    noise = 1.4826 * median(diffs)
+    return win, min(cfg.noise_cap_w, max(cfg.min_edge_w, cfg.noise_k * noise))
 
 
 def detect_edges(run: Sequence[tuple[datetime, float]], cfg: DiscoveryConfig) -> list[Edge]:
@@ -191,18 +246,50 @@ def detect_edges(run: Sequence[tuple[datetime, float]], cfg: DiscoveryConfig) ->
         raw.append((start_idx, j))
         i = j + 1
 
-    win = cfg.settle_window_s
-    for start_idx, end_idx in raw:
-        before = _steady_level(run, start_idx, win, forward=False)
-        after = _steady_level(run, end_idx, win, forward=True)
+    win, threshold = line_profile(run, cfg)
+    merge_win = max(cfg.ramp_window_s, min(win, cfg.merge_window_max_s))
+    # Steady windows stop at the neighbouring *significant* raw step, so a short
+    # load (a 3-min kettle on a slow meter) is not averaged with its own OFF.
+    big = [k for k, (a, b) in enumerate(raw) if abs(run[b][1] - run[a][1]) >= 0.5 * threshold]
+    big_set = set(big)
+    prev_big: dict[int, int | None] = {}
+    next_big: dict[int, int | None] = {}
+    last = None
+    for k in range(len(raw)):
+        prev_big[k] = last
+        if k in big_set:
+            last = k
+    last = None
+    for k in range(len(raw) - 1, -1, -1):
+        next_big[k] = last
+        if k in big_set:
+            last = k
+    for k, (start_idx, end_idx) in enumerate(raw):
+        pb, nb = (prev_big[k], next_big[k]) if cfg.bound_windows else (None, None)
+        before = _steady_level(
+            run,
+            start_idx,
+            win,
+            False,
+            cfg.settle_max_samples,
+            stop=raw[pb][1] if pb is not None else None,
+        )
+        after = _steady_level(
+            run,
+            end_idx,
+            win,
+            True,
+            cfg.settle_max_samples,
+            stop=raw[nb][0] if nb is not None else None,
+        )
         delta = after - before
-        if abs(delta) < cfg.min_edge_w:
+        if abs(delta) < threshold:
             continue
         ts = run[end_idx][0]
         if (
             edges
             and (edges[-1].delta_w > 0) == (delta > 0)
-            and (ts - edges[-1].timestamp).total_seconds() <= win
+            and (ts - edges[-1].timestamp).total_seconds() <= merge_win
         ):
             prev = edges.pop()
             edges.append(Edge(ts, after - prev.level_before_w, prev.level_before_w, after))
@@ -210,8 +297,8 @@ def detect_edges(run: Sequence[tuple[datetime, float]], cfg: DiscoveryConfig) ->
         if (
             edges
             and (edges[-1].delta_w > 0) != (delta > 0)
-            and (ts - edges[-1].timestamp).total_seconds() <= win
-            and abs(edges[-1].delta_w + delta) < cfg.min_edge_w
+            and (ts - edges[-1].timestamp).total_seconds() <= merge_win
+            and abs(edges[-1].delta_w + delta) < threshold
         ):
             # up-and-back-down within the settle window: a transient, not a load
             edges.pop()
@@ -220,32 +307,63 @@ def detect_edges(run: Sequence[tuple[datetime, float]], cfg: DiscoveryConfig) ->
     return edges
 
 
-def pair_edges(edges: Sequence[Edge], cfg: DiscoveryConfig) -> list[PairedEvent]:
-    """Match falling edges to open rising edges of similar magnitude."""
+def pair_edges(
+    edges: Sequence[Edge],
+    cfg: DiscoveryConfig,
+    run: Sequence[tuple[datetime, float]] | None = None,
+) -> list[PairedEvent]:
+    """Match falling edges to open rising edges of similar magnitude.
+
+    With ``run`` available, a pair is only accepted if the line actually held
+    the load in between: the 10th percentile of power during the event must stay
+    above ``level_before + min_hold_fraction x power``. This rejects phantom
+    pairs such as an ON matched with the OFF of a *later* cycle after the real
+    OFF was missed. Among similar-sized candidates the most recent ON is tried
+    first.
+    """
+    times = [t for t, _ in run] if run else []
     open_on: list[Edge] = []
     events: list[PairedEvent] = []
+
+    def holds(on: Edge, off: Edge, power: float) -> bool:
+        if not run:
+            return True
+        lo, hi = bisect_right(times, on.timestamp), bisect_left(times, off.timestamp)
+        inside = sorted(run[k][1] for k in range(lo, hi))
+        if not inside:
+            return True
+        # Another load may stop while this one runs (a compressor halting when the
+        # defrost heater starts): compare against the lower of the two baselines.
+        base = min(on.level_before_w, off.level_after_w)
+        return _percentile(inside, 0.1) >= base + cfg.min_hold_fraction * power
+
     for e in edges:
         if e.delta_w > 0:
             open_on.append(e)
             continue
         drop = -e.delta_w
-        best_idx = -1
-        best_err = float("inf")
-        for idx in range(len(open_on) - 1, -1, -1):
-            on = open_on[idx]
-            age = (e.timestamp - on.timestamp).total_seconds()
-            if age > cfg.max_event_duration_s:
+        cands = []
+        for idx, on in enumerate(open_on):
+            if (e.timestamp - on.timestamp).total_seconds() > cfg.max_event_duration_s:
                 continue
             tol = max(cfg.pair_tolerance_abs_w, cfg.pair_tolerance_rel * on.delta_w)
             err = abs(on.delta_w - drop)
-            if err <= tol and err < best_err:
-                best_err, best_idx = err, idx
-        if best_idx >= 0:
-            on = open_on.pop(best_idx)
-            dur = (e.timestamp - on.timestamp).total_seconds()
-            if dur >= cfg.min_event_duration_s:
-                events.append(PairedEvent(on.timestamp, e.timestamp, (on.delta_w + drop) / 2.0))
-        # stale ONs never closed: forget them
+            if err <= tol:
+                if cfg.prefer_recent:
+                    cands.append((round(err / max(5.0, tol / 3.0)), -on.timestamp.timestamp(), idx))
+                else:
+                    cands.append((err, 0.0, idx))
+        # Validation only arbitrates *competing* ONs (where cycles get fused); a lone
+        # candidate is trusted, since thermostatic loads dip inside a genuine run.
+        validate = cfg.validate_pairs and (len(cands) > 1 or not cfg.validate_only_ambiguous)
+        for _, _, idx in sorted(cands):
+            on = open_on[idx]
+            power = (on.delta_w + drop) / 2.0
+            if not validate or holds(on, e, power):
+                open_on.pop(idx)
+                if (e.timestamp - on.timestamp).total_seconds() >= cfg.min_event_duration_s:
+                    events.append(PairedEvent(on.timestamp, e.timestamp, power))
+                break
         open_on = [
             o
             for o in open_on
@@ -373,7 +491,7 @@ def discover_patterns(
     cfg = cfg or DiscoveryConfig()
     events: list[PairedEvent] = []
     for run in clean_series(samples, cfg):
-        events.extend(pair_edges(detect_edges(run, cfg), cfg))
+        events.extend(pair_edges(detect_edges(run, cfg), cfg, run))
 
     candidates: list[PatternCandidate] = []
     power_groups = _density_clusters(
@@ -491,6 +609,7 @@ __all__ = [
     "clean_series",
     "covered_by_profile",
     "detect_edges",
+    "line_profile",
     "discover_patterns",
     "pair_edges",
     "profile_from_candidate",

@@ -163,3 +163,27 @@ def test_profile_from_candidate_and_matching() -> None:
     defrost = dict(cand, power_w=193.0)
     band = [{"appliance_id": "nevera_desescarche", "min_power_w": 200, "max_power_w": 300}]
     assert covered_by_profile(defrost, band) == "nevera_desescarche"
+
+
+def test_missed_off_edge_does_not_fuse_two_cycles() -> None:
+    """Freezer: ON 0 min, (OFF at 16 min missed), ON 37 min, OFF 53 min. Without
+    validation the first ON pairs with the 53-min OFF (a phantom 53-min run)."""
+    from custom_components.hass_nilm.engine.discovery import Edge
+
+    cfg = DiscoveryConfig(median_window=1, validate_pairs=True)
+    run = []
+    for m in range(0, 60):
+        on = m < 16 or 37 <= m < 53
+        run.append((T0 + timedelta(minutes=m), 120.0 if on else 48.0))
+    edges = [
+        Edge(T0, 72.0, 48.0, 120.0),
+        # second ON measured a bit low (60 W): the stale first ON matches the OFF better
+        Edge(T0 + timedelta(minutes=37), 60.0, 48.0, 108.0),
+        Edge(T0 + timedelta(minutes=53), -72.0, 120.0, 48.0),
+    ]
+    naive = pair_edges(edges, cfg)  # no run: cannot validate -> phantom 53-min run
+    assert len(naive) == 1 and naive[0].start == T0
+    events = pair_edges(edges, cfg, run)
+    assert len(events) == 1
+    assert events[0].start == T0 + timedelta(minutes=37)
+    assert round(events[0].duration_s / 60) == 16
