@@ -16,6 +16,7 @@ about once, and statistics are refreshed with every run.
 from __future__ import annotations
 
 import logging
+import random
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -31,8 +32,11 @@ from .const import CONF_APPLIANCE_ID, CONF_APPLIANCES, DOMAIN
 from .coordinator import state_to_watts
 from .engine.discovery import (
     DiscoveryConfig,
+    PatternCandidate,
+    coincidences,
     covered_by_profile,
     discover_patterns,
+    flow_share,
     profile_from_candidate,
     same_pattern,
     to_dict,
@@ -47,6 +51,30 @@ STARTUP_DELAY_S = 300
 DAILY_RUN = (3, 40, 0)
 MAX_PENDING_ISSUES = 5
 ISSUE_PREFIX = "pattern_"
+# Bump when discovery/clue logic changes: the next start re-learns at once.
+DISCOVERY_VERSION = 3
+CLUE_WINDOW_S = 90
+RANDOM_WINDOWS = 40
+CLUE_DOMAINS = {
+    "binary_sensor",
+    "switch",
+    "light",
+    "cover",
+    "media_player",
+    "input_boolean",
+    "lock",
+    "person",
+    "device_tracker",
+    "climate",
+    "fan",
+    "vacuum",
+    "remote",
+    "select",
+    "input_select",
+}
+FLOW_UNITS = {"L/min", "l/min", "L/h", "m³/h"}
+WEEKDAYS = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
+NONE_TEXT = "—"
 
 
 def issue_id_for(entry_id: str, candidate_id: str) -> str:
@@ -71,6 +99,10 @@ class PatternDiscovery:
         stored = await self._store.async_load()
         if stored:
             self.data = stored
+        # A detector may have been added since the last run (entry reloads on
+        # every options change): close the questions it now answers.
+        if self._reconcile():
+            self._store.async_delay_save(lambda: self.data, 1)
         self._sync_issues()
         self._unsubs.append(
             async_track_time_change(
@@ -81,14 +113,16 @@ class PatternDiscovery:
                 second=DAILY_RUN[2],
             )
         )
-        if not self.data.get("last_run"):
+        if not self.data.get("last_run") or self.data.get("discovery_version") != DISCOVERY_VERSION:
             self._unsubs.append(async_call_later(self.hass, STARTUP_DELAY_S, self._scheduled_run))
 
-    @callback
-    def async_shutdown(self) -> None:
+    async def async_shutdown(self) -> None:
+        """Stop timers and flush the store: a reload right after a change (e.g. a
+        detector added) must not read a store whose delayed save hasn't landed."""
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        await self._store.async_save(self.data)
 
     async def _scheduled_run(self, _now: datetime | None = None) -> None:
         try:
@@ -123,7 +157,7 @@ class PatternDiscovery:
                 for st in states:
                     w = state_to_watts(st)
                     if w is not None:
-                        out.append((st.last_updated, w))
+                        out.append((dt_util.as_local(st.last_updated), w))
                 del states
                 first = False
                 t0 = t1
@@ -140,11 +174,24 @@ class PatternDiscovery:
         self._running = True
         try:
             samples = await self._async_load_samples(days)
-            cands = await self.hass.async_add_executor_job(
-                lambda: [to_dict(c) for c in discover_patterns(samples, DiscoveryConfig())]
+            found: list[PatternCandidate] = await self.hass.async_add_executor_job(
+                lambda: discover_patterns(samples, DiscoveryConfig())
             )
-            summary = self.process_candidates(cands)
+            summary = self.process_candidates([to_dict(c) for c in found])
+            by_cid = {c.candidate_id: c for c in found}
+            targets = {
+                pid: by_cid[cid]
+                for pid, cid in summary.pop("seen").items()
+                if pid in self._asked() and cid in by_cid
+            }
+            clues = await self._async_clues(targets, days)
+            for pid, clue in clues.items():
+                self.data["patterns"][pid]["clues"] = clue
+            self.data["discovery_version"] = DISCOVERY_VERSION
+            self._store.async_delay_save(lambda: self.data, 1)
+            self._sync_issues()
             summary["samples"] = len(samples)
+            summary["clues_for"] = sorted(clues)
             return summary
         finally:
             self._running = False
@@ -155,6 +202,7 @@ class PatternDiscovery:
         patterns: dict[str, dict[str, Any]] = self.data.setdefault("patterns", {})
         profiles = list(self.entry.options.get(CONF_APPLIANCES, []))
         new, updated, known = [], [], []
+        seen: dict[str, str] = {}
         for cand in cands:
             match_id = next(
                 (pid for pid, p in patterns.items() if same_pattern(p["stats"], cand)), None
@@ -163,6 +211,7 @@ class PatternDiscovery:
                 patterns[match_id]["stats"] = cand
                 patterns[match_id]["last_seen_run"] = dt_util.utcnow().isoformat()
                 updated.append(match_id)
+                seen[match_id] = cand["candidate_id"]
                 continue
             pid = slugify(cand["candidate_id"])
             covered = covered_by_profile(cand, profiles)
@@ -174,10 +223,143 @@ class PatternDiscovery:
                 "last_seen_run": dt_util.utcnow().isoformat(),
             }
             (known if covered else new).append(pid)
+            seen[pid] = cand["candidate_id"]
+        retired = self._reconcile(seen=set(seen))
         self.data["last_run"] = dt_util.utcnow().isoformat()
         self._store.async_delay_save(lambda: self.data, 1)
         self._sync_issues()
-        return {"new": new, "updated": updated, "known": known}
+        return {"new": new, "updated": updated, "known": known, "retired": retired, "seen": seen}
+
+    @callback
+    def _reconcile(self, seen: set[str] | None = None) -> list[str]:
+        """Close pending questions that no longer apply.
+
+        - a detector now explains it (added by hand or by naming another pattern)
+          -> ``known``;
+        - the latest run no longer finds it (e.g. a sub-meter now removes that
+          load) -> forgotten.
+        """
+        patterns: dict[str, dict[str, Any]] = self.data.setdefault("patterns", {})
+        profiles = list(self.entry.options.get(CONF_APPLIANCES, []))
+        changed: list[str] = []
+        for pid in list(patterns):
+            pat = patterns[pid]
+            if pat["status"] != "pending":
+                continue
+            covered = covered_by_profile(pat["stats"], profiles)
+            if covered:
+                pat["status"], pat["appliance_id"] = "known", covered
+                changed.append(pid)
+            elif seen is not None and pid not in seen:
+                del patterns[pid]
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id_for(self.entry.entry_id, pid))
+                changed.append(pid)
+        return changed
+
+    @callback
+    def _asked(self) -> set[str]:
+        """The pending patterns that get a Repairs question (biggest energy first)."""
+        patterns = self.data.get("patterns", {})
+        pending = sorted(
+            (pid for pid, p in patterns.items() if p["status"] == "pending"),
+            key=lambda pid: patterns[pid]["stats"].get("energy_kwh_per_day", 0),
+            reverse=True,
+        )
+        return set(pending[:MAX_PENDING_ISSUES])
+
+    # ---------------------------------------------------------------- clues
+
+    async def _async_clues(
+        self, targets: dict[str, PatternCandidate], days: int
+    ) -> dict[str, dict[str, str]]:
+        """What else happens in the house when each pattern runs.
+
+        For the last runs of each asked pattern: which entities change state within
+        +-90 s (versus random instants: the lift), and whether the house water
+        meter shows flow. Read-only Recorder queries, off the event loop.
+        """
+        if not targets or "recorder" not in self.hass.config.components:
+            return {}
+        from homeassistant.components.recorder import get_instance
+        from homeassistant.components.recorder import history as recorder_history
+        from homeassistant.helpers import entity_registry as er
+
+        own = {
+            e.entity_id
+            for e in er.async_entries_for_config_entry(er.async_get(self.hass), self.entry.entry_id)
+        }
+        own.add(self.power_entity)
+        ents = [
+            st.entity_id
+            for st in self.hass.states.async_all()
+            if st.domain in CLUE_DOMAINS and st.entity_id not in own
+        ]
+        water = next(
+            (
+                st.entity_id
+                for st in self.hass.states.async_all("sensor")
+                if st.attributes.get("unit_of_measurement") in FLOW_UNITS
+            ),
+            None,
+        )
+        names = {e: (self.hass.states.get(e).name if self.hass.states.get(e) else e) for e in ents}
+        hass = self.hass
+        win = timedelta(seconds=CLUE_WINDOW_S)
+
+        def job() -> dict[str, dict[str, str]]:
+            def changed(t: datetime) -> set[str]:
+                if not ents:
+                    return set()
+                res = recorder_history.get_significant_states(
+                    hass,
+                    t - win,
+                    t + win,
+                    ents,
+                    include_start_time_state=False,
+                    significant_changes_only=False,
+                    minimal_response=True,
+                    no_attributes=True,
+                )
+                return {e for e, rows in res.items() if rows}
+
+            now = dt_util.utcnow()
+            randoms = [
+                now - timedelta(seconds=random.uniform(0, days * 86400))
+                for _ in range(RANDOM_WINDOWS)
+            ]
+            base = [changed(t) for t in randoms]
+            flow: list[tuple[datetime, float]] = []
+            if water:
+                for st in recorder_history.state_changes_during_period(
+                    hass, now - timedelta(days=days), now, water, no_attributes=True
+                ).get(water, []):
+                    try:
+                        flow.append((st.last_updated, float(st.state)))
+                    except (TypeError, ValueError):
+                        continue
+            out: dict[str, dict[str, str]] = {}
+            for pid, cand in targets.items():
+                runs = list(cand.recent_runs)
+                per_run = [changed(a) | changed(b) for a, b in runs]
+                found = coincidences(per_run, base)
+                coincide = " · ".join(f"{names.get(e, e)} ({rate:.0%})" for e, rate, _ in found)
+                water_txt = "sin caudalímetro"
+                if water:
+                    share = flow_share(runs, flow)
+                    span = runs[0][1] - runs[0][0] if runs else timedelta(minutes=5)
+                    base_share = flow_share([(t, t + span) for t in randoms], flow)
+                    if share is not None:
+                        water_txt = (
+                            f"agua en el {share:.0%} de los usos (al azar: {base_share or 0:.0%})"
+                        )
+                out[pid] = {"coincide": coincide or "nada destacable", "water": water_txt}
+            return out
+
+        try:
+            return await get_instance(self.hass).async_add_executor_job(job)
+        except Exception:  # noqa: BLE001 - clues are a nicety; never break learning
+            _LOGGER.exception("hass_nilm clue lookup failed for %s", self.entry.title)
+            return {}
 
     # --------------------------------------------------------------- issues
 
@@ -185,12 +367,7 @@ class PatternDiscovery:
     def _sync_issues(self) -> None:
         """One Repairs issue per pending pattern (biggest energy first, capped)."""
         patterns = self.data.get("patterns", {})
-        pending = sorted(
-            (pid for pid, p in patterns.items() if p["status"] == "pending"),
-            key=lambda pid: patterns[pid]["stats"].get("energy_kwh_per_day", 0),
-            reverse=True,
-        )
-        ask = set(pending[:MAX_PENDING_ISSUES])
+        ask = self._asked()
         for pid, pat in patterns.items():
             iid = issue_id_for(self.entry.entry_id, pid)
             if pid not in ask:
@@ -214,6 +391,9 @@ class PatternDiscovery:
                     "period": f"{per:.0f} min" if per and s.get("periodic") else "irregular",
                     "kwh_day": f"{s['energy_kwh_per_day']:.2f}",
                     "hint": s.get("hint", ""),
+                    **_time_clues(s),
+                    "coincide": pat.get("clues", {}).get("coincide", NONE_TEXT),
+                    "water": pat.get("clues", {}).get("water", NONE_TEXT),
                 },
                 data={"entry_id": self.entry.entry_id, "pattern_id": pid},
             )
@@ -252,3 +432,25 @@ class PatternDiscovery:
 
     def as_dict(self) -> dict[str, Any]:
         return self.data
+
+
+def _time_clues(stats: dict[str, Any]) -> dict[str, str]:
+    """Peak hours, busiest weekdays and last runs, in the user's words."""
+    hours = stats.get("hours_profile") or []
+    top_h = [h for h in sorted(range(len(hours)), key=lambda h: -hours[h]) if hours[h]][:3]
+    days = stats.get("weekday_profile") or []
+    top_d = [d for d in sorted(range(len(days)), key=lambda d: -days[d]) if days[d]][:3]
+    last = []
+    for ex in (stats.get("examples") or [])[-3:]:
+        try:
+            when = dt_util.as_local(datetime.fromisoformat(ex["start"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        last.append(
+            f"{WEEKDAYS[when.weekday()]} {when:%d %H:%M} ({ex.get('duration_min', 0):.0f} min)"
+        )
+    return {
+        "hours": " · ".join(f"{h:02d}h" for h in top_h) or NONE_TEXT,
+        "days": " · ".join(WEEKDAYS[d] for d in top_d) or NONE_TEXT,
+        "last": " · ".join(reversed(last)) or NONE_TEXT,
+    }

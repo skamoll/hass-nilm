@@ -266,7 +266,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if coord is not None:
         coord.async_stop_listeners()
         if coord.patterns is not None:
-            coord.patterns.async_shutdown()
+            await coord.patterns.async_shutdown()
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok and DOMAIN in hass.data:

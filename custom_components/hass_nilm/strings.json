@@ -128,7 +128,7 @@
         "step": {
           "init": {
             "title": "Which appliance is this?",
-            "description": "Hass-NILM found a recurring pattern on **{line}**:\n\n- Power: **{power} W**\n- Each run: **{duration} min**\n- Runs per day: **{per_day}** (period: {period})\n- Energy: **{kwh_day} kWh/day**\n- Hint: {hint}\n\nName it to create its detector automatically, or ignore it.",
+            "description": "Hass-NILM found a recurring pattern on **{line}**:\n\n- Power: **{power} W** · each run **{duration} min** · **{per_day}** runs/day (period: {period}) · **{kwh_day} kWh/day**\n- Usual hours: **{hours}** · busiest days: **{days}**\n- Last runs: {last}\n- Happens together with: **{coincide}**\n- Water: {water}\n- Hint: {hint}\n\nName it to create its detector automatically, or ignore it.",
             "menu_options": {
               "name_it": "Name this appliance",
               "ignore": "Ignore this pattern"

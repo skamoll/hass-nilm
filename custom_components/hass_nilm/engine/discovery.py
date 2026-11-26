@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from statistics import median
 
+RECENT_RUNS = 20
+
 
 @dataclass(frozen=True, slots=True)
 class DiscoveryConfig:
@@ -115,6 +117,9 @@ class PatternCandidate:
     first_seen: datetime
     last_seen: datetime
     examples: tuple[tuple[datetime, float, float], ...] = field(default_factory=tuple)
+    weekday_profile: tuple[int, ...] = (0,) * 7
+    # (start, end) of the most recent runs, for clue lookups (not persisted)
+    recent_runs: tuple[tuple[datetime, datetime], ...] = field(default_factory=tuple)
 
     @property
     def is_periodic(self) -> bool:
@@ -453,8 +458,10 @@ def describe_cluster(
         mad = median(abs(x - period) for x in g)
         period_cv = (1.4826 * mad / period) if period > 0 else None
     hours = [0] * 24
+    weekdays = [0] * 7
     for e in events:
         hours[e.start.hour] += 1
+        weekdays[e.start.weekday()] += 1
     energy = [e.energy_kwh for e in events]
     per_day = len(events) / span_days
     p_med = median(powers)
@@ -480,6 +487,8 @@ def describe_cluster(
         first_seen=events[0].start,
         last_seen=events[-1].start,
         examples=ex,
+        weekday_profile=tuple(weekdays),
+        recent_runs=tuple((e.start, e.end) for e in events[-RECENT_RUNS:]),
     )
 
 
@@ -535,6 +544,7 @@ def to_dict(c: PatternCandidate) -> dict:
         "period_cv": c.period_cv,
         "periodic": c.is_periodic,
         "hours_profile": list(c.hours_profile),
+        "weekday_profile": list(c.weekday_profile),
         "hint": c.hint,
         "first_seen": c.first_seen.isoformat(),
         "last_seen": c.last_seen.isoformat(),
@@ -601,14 +611,74 @@ def profile_from_candidate(cand: dict, name: str) -> dict:
     }
 
 
+def coincidences(
+    per_event: Sequence[set[str]],
+    per_random: Sequence[set[str]],
+    *,
+    min_rate: float = 0.3,
+    min_lift: float = 3.0,
+    top: int = 3,
+) -> list[tuple[str, float, float]]:
+    """Entities that change around a pattern's runs far more often than at random.
+
+    ``per_event``: for each run, the entity_ids that changed state near it.
+    ``per_random``: the same for random instants (the base rate).
+    Returns (entity_id, hit_rate, lift) sorted by hit rate; lift = rate / base.
+    """
+    if not per_event:
+        return []
+    n, m = len(per_event), max(1, len(per_random))
+    counts: dict[str, int] = {}
+    for changed in per_event:
+        for ent in changed:
+            counts[ent] = counts.get(ent, 0) + 1
+    out = []
+    for ent, k in counts.items():
+        rate = k / n
+        base = sum(1 for changed in per_random if ent in changed) / m
+        lift = rate / max(base, 0.5 / m)
+        if rate >= min_rate and lift >= min_lift:
+            out.append((ent, round(rate, 2), round(lift, 1)))
+    out.sort(key=lambda x: (-x[1], -x[2]))
+    return out[:top]
+
+
+def flow_share(
+    runs: Sequence[tuple[datetime, datetime]],
+    flow: Sequence[tuple[datetime, float]],
+    *,
+    min_flow: float = 0.3,
+    max_window_s: float = 900.0,
+) -> float | None:
+    """Share of runs during which a flow meter (e.g. house water, L/min) showed
+    flow. Washing machines and dishwashers take water; ovens and kettles don't."""
+    if not runs or not flow:
+        return None
+    times = [t for t, _ in flow]
+    hits = 0
+    for start, end in runs:
+        stop = min(end.timestamp(), start.timestamp() + max_window_s)
+        i = max(0, bisect_right(times, start) - 1)  # level in force at start
+        wet = False
+        while i < len(flow) and flow[i][0].timestamp() <= stop:
+            if flow[i][1] >= min_flow:
+                wet = True
+                break
+            i += 1
+        hits += wet
+    return round(hits / len(runs), 2)
+
+
 __all__ = [
     "DiscoveryConfig",
     "Edge",
     "PairedEvent",
     "PatternCandidate",
     "clean_series",
+    "coincidences",
     "covered_by_profile",
     "detect_edges",
+    "flow_share",
     "line_profile",
     "discover_patterns",
     "pair_edges",

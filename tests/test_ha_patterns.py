@@ -116,8 +116,15 @@ async def test_new_pattern_is_asked_named_and_becomes_a_detector(tmp_path: Path)
         assert issue.is_fixable and issue.translation_placeholders["power"] == "70"
 
         # Same load seen again next day with slightly different stats: not re-asked.
-        again = manager.process_candidates([dict(freezer, power_w=72.0, duration_min=15.5)])
-        assert again["new"] == [] and again["updated"] == ["p70w_d16m"]
+        again = manager.process_candidates(
+            [dict(freezer, power_w=72.0, duration_min=15.5), lamp, kettle]
+        )
+        assert again["new"] == [] and again["updated"] == ["p70w_d16m", "p34w_d84m", "p2000w_d3m"]
+        assert again["retired"] == []
+
+        # The question carries time clues the user can recognise.
+        ph = reg.async_get_issue(DOMAIN, freezer_issue).translation_placeholders
+        assert ph["hours"].count("h") == 3 and ph["coincide"] == "—"
 
         # The user answers in Repairs: "Congelador".
         flows = repairs_flow_manager(hass)
@@ -146,5 +153,43 @@ async def test_new_pattern_is_asked_named_and_becomes_a_detector(tmp_path: Path)
         assert reg.async_get_issue(DOMAIN, lamp_issue) is None
         assert coord.patterns.data["patterns"]["p34w_d84m"]["status"] == "ignored"
         assert len(entry.options[CONF_APPLIANCES]) == 2  # ignoring creates nothing
+
+        # A load that stops appearing (e.g. now removed by a sub-meter) is retired,
+        # and its question disappears without the user doing anything.
+        mgr = hass.data[DOMAIN][entry.entry_id].patterns
+        server = _cand("p211w_d96m", 211.0, 96.0, 2.4, "sin pista clara")
+        mgr.process_candidates([server])
+        server_issue = issue_id_for(entry.entry_id, "p211w_d96m")
+        assert reg.async_get_issue(DOMAIN, server_issue) is not None
+        gone = mgr.process_candidates([])
+        assert gone["retired"] == ["p211w_d96m"]
+        assert reg.async_get_issue(DOMAIN, server_issue) is None
+        assert "p211w_d96m" not in mgr.data["patterns"]
+
+        # A detector added by hand closes the matching question on the next load.
+        fryer = _cand("p1500w_d5m", 1500.0, 4.7, 1.0, "calor rápido")
+        mgr.process_candidates([fryer])
+        fryer_issue = issue_id_for(entry.entry_id, "p1500w_d5m")
+        assert reg.async_get_issue(DOMAIN, fryer_issue) is not None
+        hass.config_entries.async_update_entry(
+            entry,
+            options={
+                **entry.options,
+                CONF_APPLIANCES: [
+                    *entry.options[CONF_APPLIANCES],
+                    {
+                        CONF_APPLIANCE_ID: "freidora",
+                        CONF_APPLIANCE_NAME: "Freidora",
+                        CONF_ARCHETYPE: "step",
+                        CONF_MIN_POWER_W: 1150.0,
+                        CONF_MAX_POWER_W: 1650.0,  # covers the 1500 W pattern
+                    },
+                ],
+            },
+        )
+        await hass.async_block_till_done()
+        mgr = hass.data[DOMAIN][entry.entry_id].patterns
+        assert mgr.data["patterns"]["p1500w_d5m"]["status"] == "known"
+        assert reg.async_get_issue(DOMAIN, fryer_issue) is None
     finally:
         await hass.async_stop(force=True)

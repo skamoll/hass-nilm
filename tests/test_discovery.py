@@ -187,3 +187,32 @@ def test_missed_off_edge_does_not_fuse_two_cycles() -> None:
     assert len(events) == 1
     assert events[0].start == T0 + timedelta(minutes=37)
     assert round(events[0].duration_s / 60) == 16
+
+
+def test_coincidences_find_the_entity_that_moves_with_the_load() -> None:
+    from custom_components.hass_nilm.engine.discovery import coincidences
+
+    per_event = [{"binary_sensor.cocina_presencia", "light.pasillo"} for _ in range(17)]
+    per_event += [{"light.pasillo"} for _ in range(3)]
+    per_random = [{"light.pasillo"} if i % 2 else set() for i in range(40)]
+    found = coincidences(per_event, per_random)
+    assert found[0][0] == "binary_sensor.cocina_presencia"
+    assert found[0][1] == 0.85 and found[0][2] >= 3
+    # light.pasillo changes all the time anyway: no lift, not a clue
+    assert all(e != "light.pasillo" for e, _, _ in found)
+    assert coincidences([], per_random) == []
+
+
+def test_flow_share_tells_water_appliances_apart() -> None:
+    from custom_components.hass_nilm.engine.discovery import flow_share
+
+    flow = [(T0, 0.0)]
+    runs = []
+    for k in range(10):
+        start = T0 + timedelta(hours=k)
+        runs.append((start, start + timedelta(minutes=30)))
+        if k < 8:  # 8 of 10 runs fill with water a minute after starting
+            flow += [(start + timedelta(minutes=1), 6.5), (start + timedelta(minutes=3), 0.0)]
+    assert flow_share(runs, flow) == 0.8
+    assert flow_share(runs, [(T0, 0.0)]) == 0.0
+    assert flow_share([], flow) is None

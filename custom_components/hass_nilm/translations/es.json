@@ -128,7 +128,7 @@
         "step": {
           "init": {
             "title": "¿Qué electrodoméstico es este?",
-            "description": "Hass-NILM ha encontrado un patrón que se repite en **{line}**:\n\n- Potencia: **{power} W**\n- Cada vez: **{duration} min**\n- Veces al día: **{per_day}** (ritmo: {period})\n- Energía: **{kwh_day} kWh/día**\n- Pista: {hint}\n\nPonle nombre y se creará su detector automáticamente, o ignóralo.",
+            "description": "Hass-NILM ha encontrado un patrón que se repite en **{line}**:\n\n- Potencia: **{power} W** · cada vez **{duration} min** · **{per_day}** veces al día (ritmo: {period}) · **{kwh_day} kWh/día**\n- Horas habituales: **{hours}** · días con más uso: **{days}**\n- Últimas veces: {last}\n- Coincide con: **{coincide}**\n- Agua: {water}\n- Pista: {hint}\n\nPonle nombre y se creará su detector automáticamente, o ignóralo.",
             "menu_options": {
               "name_it": "Ponerle nombre",
               "ignore": "Ignorar este patrón"
