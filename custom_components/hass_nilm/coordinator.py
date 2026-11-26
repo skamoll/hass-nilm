@@ -177,6 +177,7 @@ class NilmLineCoordinator(DataUpdateCoordinator[LineFrame | None]):
         self.engine = NilmLineEngine(line_cfg, profiles)
         self._unsub_state_listener: CALLBACK_TYPE | None = None
         self.line_device_id: str | None = None
+        self.patterns: Any = None  # PatternDiscovery, set in async_setup_entry
 
         super().__init__(
             hass,

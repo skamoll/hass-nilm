@@ -21,6 +21,16 @@ A deterministic, zero-dependency Home Assistant custom integration (`hass_nilm`)
 
 ---
 
+## Learning appliances (pattern discovery)
+
+You do not need to know how an appliance consumes. Once a day (03:40, and 5 minutes after the first start) each line learns from the last 30 days of its power history in the Recorder:
+
+1. **Discover** - steady-state edges are detected, ON/OFF edges are paired into runs, and runs are grouped by power and duration (density peaks on a log scale). Each group is a *pattern*: median power, run length, runs per day, periodicity and a hint (fridge compressor, No Frost defrost, kettle...).
+2. **Ask** - every new pattern that no existing detector explains appears in **Settings > System > Repairs** as *"New load pattern on <line>: which appliance is it?"*. Open it and either **name** it or **ignore** it.
+3. **Build** - naming a pattern creates its detector automatically, with power bands and timings taken from the observed spread. Patterns are matched across days, so each one is asked once.
+
+Run it on demand with the `hass_nilm.discover_patterns` action (returns the learned patterns). History is read in 3-day chunks without attributes, off the event loop.
+
 ## Entities Created per Appliance
 
 | Platform | Entity Key | Device / State Class | Unit | Purpose |

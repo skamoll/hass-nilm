@@ -119,5 +119,35 @@
         "name": "Running"
       }
     }
+  },
+  "issues": {
+    "new_pattern": {
+      "title": "New load pattern on {line}: which appliance is it?",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Which appliance is this?",
+            "description": "Hass-NILM found a recurring pattern on **{line}**:\n\n- Power: **{power} W**\n- Each run: **{duration} min**\n- Runs per day: **{per_day}** (period: {period})\n- Energy: **{kwh_day} kWh/day**\n- Hint: {hint}\n\nName it to create its detector automatically, or ignore it.",
+            "menu_options": {
+              "name_it": "Name this appliance",
+              "ignore": "Ignore this pattern"
+            }
+          },
+          "name_it": {
+            "title": "Name the appliance",
+            "description": "The detector is built from the observed pattern ({power} W, {duration} min). You only need the name.",
+            "data": {
+              "name": "Appliance name"
+            }
+          }
+        },
+        "error": {
+          "name_required": "Write a name, or go back and choose Ignore."
+        },
+        "abort": {
+          "line_not_loaded": "This NILM line is not loaded right now. Try again later."
+        }
+      }
+    }
   }
 }

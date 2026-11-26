@@ -41,6 +41,7 @@ from .const import (
     LINE_MODEL,
 )
 from .coordinator import NilmLineCoordinator, dict_to_appliance_profile
+from .discovery_manager import PatternDiscovery
 from .engine import Archetype
 from .recorder_scanner import async_scan_entity_history
 
@@ -129,6 +130,29 @@ def _register_services(hass: HomeAssistant) -> None:
             entry,
             options={**entry.options, CONF_APPLIANCES: apps},
         )
+
+    async def handle_discover_patterns(call: ServiceCall) -> dict[str, Any]:
+        await _async_ensure_admin(hass, call)
+        entry = _resolve_entry(hass, call)
+        manager: PatternDiscovery = hass.data[DOMAIN][entry.entry_id].patterns
+        summary = await manager.async_run(days=int(call.data.get("days", 30)))
+        return {"line": entry.title, **summary, "patterns": manager.as_dict()["patterns"]}
+
+    async_register_admin_service(
+        hass,
+        DOMAIN,
+        "discover_patterns",
+        handle_discover_patterns,
+        vol.Schema(
+            {
+                vol.Optional("config_entry_id"): cv.string,
+                vol.Optional("days", default=30): vol.All(
+                    vol.Coerce(int), vol.Range(min=2, max=90)
+                ),
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
 
     async_register_admin_service(
         hass,
@@ -225,6 +249,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
+    coordinator.patterns = PatternDiscovery(hass, entry, coordinator.parent_entity_id)
+    await coordinator.patterns.async_setup()
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     coordinator.async_start_listeners()
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
@@ -236,12 +263,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coord: NilmLineCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if coord is not None:
         coord.async_stop_listeners()
+        if coord.patterns is not None:
+            coord.patterns.async_shutdown()
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok and DOMAIN in hass.data:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         if not hass.data[DOMAIN]:
-            for svc in ("scan_recorder", "upsert_appliance", "remove_appliance"):
+            for svc in (
+                "scan_recorder",
+                "upsert_appliance",
+                "remove_appliance",
+                "discover_patterns",
+            ):
                 hass.services.async_remove(DOMAIN, svc)
             hass.data.pop(f"{DOMAIN}_services_registered", None)
     return unload_ok

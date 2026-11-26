@@ -119,5 +119,35 @@
         "name": "En marcha"
       }
     }
+  },
+  "issues": {
+    "new_pattern": {
+      "title": "Nuevo patrón en {line}: ¿qué electrodoméstico es?",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "¿Qué electrodoméstico es este?",
+            "description": "Hass-NILM ha encontrado un patrón que se repite en **{line}**:\n\n- Potencia: **{power} W**\n- Cada vez: **{duration} min**\n- Veces al día: **{per_day}** (ritmo: {period})\n- Energía: **{kwh_day} kWh/día**\n- Pista: {hint}\n\nPonle nombre y se creará su detector automáticamente, o ignóralo.",
+            "menu_options": {
+              "name_it": "Ponerle nombre",
+              "ignore": "Ignorar este patrón"
+            }
+          },
+          "name_it": {
+            "title": "Nombre del electrodoméstico",
+            "description": "El detector se construye con el patrón observado ({power} W, {duration} min). Solo hace falta el nombre.",
+            "data": {
+              "name": "Nombre del electrodoméstico"
+            }
+          }
+        },
+        "error": {
+          "name_required": "Escribe un nombre, o vuelve atrás y elige Ignorar."
+        },
+        "abort": {
+          "line_not_loaded": "Esta línea NILM no está cargada ahora mismo. Inténtalo más tarde."
+        }
+      }
+    }
   }
 }

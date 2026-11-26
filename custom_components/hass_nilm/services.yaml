@@ -139,3 +139,23 @@ remove_appliance:
       required: true
       selector:
         text:
+discover_patterns:
+  name: Discover appliance patterns
+  description: Learn recurring load patterns from this line's power history and ask (via Repairs) which appliance each new one is.
+  fields:
+    config_entry_id:
+      name: Line
+      description: NILM line (config entry). Optional when only one line exists.
+      required: false
+      selector:
+        config_entry:
+          integration: hass_nilm
+    days:
+      name: Days of history
+      description: Number of past days to learn from.
+      default: 30
+      selector:
+        number:
+          min: 2
+          max: 90
+          unit_of_measurement: d
